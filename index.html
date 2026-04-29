@@ -2,17 +2,16 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <title>Aangiftebotje - Arrest Mode</title>
-    <script src="https://www.gstatic.com/firebasejs/9.1.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.1.1/firebase-database-compat.js"></script>
+    <title>Aangiftebotje - Woordenschat Mode</title>
     <style>
         body { font-family: sans-serif; background: #222; color: white; text-align: center; }
         canvas { border: 2px solid #00f; background: #000; display: block; margin: 10px auto; }
-        .optie { padding: 10px; margin: 5px; cursor: pointer; }
-        .correct { background: green; color: white; }
-        .fout { background: red; color: white; }
-        #game-container, #name-box, #main-game, #admin-speed { display: none; }
-        .lb-entry { display: flex; justify-content: space-between; width: 200px; margin: 0 auto; }
+        .optie { padding: 12px; margin: 8px; cursor: pointer; border: 1px solid #555; background: #444; color: white; border-radius: 5px; width: 250px; }
+        .optie:hover { background: #666; }
+        .correct { background: green !important; color: white; }
+        .fout { background: red !important; color: white; }
+        #name-box, #main-game { display: none; }
+        .lb-entry { display: flex; justify-content: space-between; width: 200px; margin: 0 auto; border-bottom: 1px solid #444; }
     </style>
 </head>
 <body>
@@ -25,45 +24,39 @@
     </div>
 
     <div id="name-box">
-        <h2>Goed gedaan!</h2>
-        <p>Voer je agent-naam in:</p>
+        <h2>Scherp hoor!</h2>
+        <p>Voer je agent-naam in voor de top scores:</p>
         <input type="text" id="agent-name" placeholder="Naam">
-        <button onclick="startArrestMode()">Start Game</button>
+        <button onclick="startArrestMode()">Start Arrest Mode (Pacman)</button>
     </div>
 
     <div id="main-game">
         <h3>Score: <span id="scr-val">0</span> | Level: <span id="lvl-val">1</span> | Tijd: <span id="timer-val">120</span></h3>
         <canvas id="gameCanvas"></canvas>
-    </div>
-
-    <div id="admin-speed">
-        Ghost Speed: <input type="range" min="0.01" max="0.2" step="0.01" onchange="updateGhostSpeed(this.value)"> <span id="speed-val">0.06</span>
+        <p>Gebruik de pijltjestoetsen om de boeven te arresteren!</p>
     </div>
 
     <div id="leaderboard">
-        <h3>Top Agenten</h3>
+        <h3>Top Scores (Lokaal)</h3>
         <div id="lb-list"></div>
     </div>
 
-    <hr>
-    <h3>Bulk Import</h3>
-    <textarea id="bulk-input" placeholder="vraag | antwoord"></textarea><br>
-    <button onclick="importBulk()">Importeer Woorden</button>
-
 <script>
-    // --- CONFIGURATIE ---
-    const firebaseConfig = { 
-        apiKey: "", // VUL HIER JE KEY IN
-        databaseURL: "https://aangiftebotje-default-rtdb.europe-west1.firebasedatabase.app", 
-        projectId: "aangiftebotje" 
-    };
-    
-    // Initialiseer Firebase (Compat stijl)
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.database();
+    // --- WOORDENSCHAT LIJST ---
+    let dynamicWords = [
+        { v: "Wat betekent 'Verifiëren'?", m: "Controleren of iets echt waar is" },
+        { v: "Wat betekent 'Escaleren'?", m: "Een probleem hogerop leggen" },
+        { v: "Wat betekent 'Redundant'?", m: "Overbodig (omdat het al aanwezig is)" },
+        { v: "Wat betekent 'Apathisch'?", m: "Zonder emotie of belangstelling" },
+        { v: "Wat betekent 'Consensus'?", m: "Overeenstemming in een groep" },
+        { v: "Wat betekent 'Frictie'?", m: "Wrijving of onenigheid" },
+        { v: "Wat betekent 'Implementeren'?", m: "Invoeren of in gebruik nemen" },
+        { v: "Wat betekent 'Expliciet'?", m: "Heel duidelijk en letterlijk gezegd" },
+        { v: "Wat betekent 'Acuut'?", m: "Direct noodzakelijk of plotseling" },
+        { v: "Wat betekent 'Legitiem'?", m: "Wettelijk toegestaan of terecht" }
+    ];
 
-    // --- VARIABELEN ---
-    let dynamicWords = [], score = 0, frame = 0, inGame = false, quizCount = 0, lightOn = true, agentName = "";
+    let score = 0, frame = 0, inGame = false, quizCount = 0, lightOn = true, agentName = "";
     let canvas, ctx, tileSize = 20;
     let pacman = { x: 9, y: 9, dir: {x:0, y:0}, nextDir: {x:0, y:0} };
     let dots = [], walls = [], ghosts = [], ghostBaseSpeed = 0.06; 
@@ -83,51 +76,16 @@
         [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
     ];
 
-    // --- FUNCTIES ---
-
-    function importBulk() {
-        const input = document.getElementById('bulk-input').value;
-        const lines = input.split('\n');
-        lines.forEach(line => {
-            const parts = line.split('|');
-            if(parts.length === 2) {
-                const vraag = parts[0].trim();
-                const antwoord = parts[1].trim();
-                if(vraag && antwoord) {
-                    db.ref('woorden').push({ v: vraag, m: antwoord });
-                }
-            }
-        });
-        alert('Woorden toegevoegd!');
-        loadWords();
-    }
-
-    function loadWords() {
-        db.ref('woorden').once('value', snap => { 
-            if(snap.exists()){ 
-                dynamicWords = Object.values(snap.val()); 
-                showQuestion(); 
-            } else {
-                document.getElementById('vraag').innerText = "Database is leeg. Gebruik bulk import!";
-            }
-        });
-        updateLeaderboard();
-    }
-
     function showQuestion() {
         if(quizCount >= 5) { 
             document.getElementById('quiz-box').style.display='none'; 
             document.getElementById('name-box').style.display='block'; 
             return; 
         }
-        document.getElementById('progress-text').innerText = `Voortgang: ${quizCount}/5`;
+        document.getElementById('progress-text').innerText = `Voortgang: ${quizCount}/5 correct`;
         
-        if(dynamicWords.length < 3) {
-            document.getElementById('vraag').innerText = "Voeg minimaal 3 woorden toe!";
-            return;
-        }
-
-        const q = dynamicWords[Math.floor(Math.random()*dynamicWords.length)];
+        let pool = [...dynamicWords].sort(() => 0.5 - Math.random());
+        const q = pool[0];
         let others = dynamicWords.filter(w => w.m !== q.m).map(w => w.m).sort(() => 0.5 - Math.random());
         let opties = [q.m, others[0], others[1]].sort(() => 0.5 - Math.random());
         
@@ -144,10 +102,9 @@
     }
 
     function startArrestMode() {
-        agentName = document.getElementById('agent-name').value || "Agent";
+        agentName = document.getElementById('agent-name').value || "Anonieme Agent";
         document.getElementById('name-box').style.display = 'none';
         document.getElementById('main-game').style.display = 'block';
-        document.getElementById('admin-speed').style.display = 'block';
         setupCanvas(); 
         initLevel(1); 
         requestAnimationFrame(gameLoop);
@@ -176,73 +133,82 @@
         pacman.x = 9; pacman.y = 9; pacman.dir = {x:0, y:0};
         ghosts = [{x:1, y:1, color:'red', vx:0, vy:0}, {x:17, y:1, color:'pink', vx:0, vy:0}];
         if(timerInterval) clearInterval(timerInterval);
-        timerInterval = setInterval(() => { 
-            if(inGame) { 
-                timeLeft--; 
-                document.getElementById('timer-val').innerText = timeLeft;
-                if(timeLeft <= 0) gameOver(); 
-            }
-        }, 1000);
+        timerInterval = setInterval(() => { if(inGame) { timeLeft--; document.getElementById('timer-val').innerText = timeLeft; if(timeLeft <= 0) gameOver(); } }, 1000);
         inGame = true;
-    }
-
-    function updateGhostSpeed(val) {
-        ghostBaseSpeed = parseFloat(val);
-        document.getElementById('speed-val').innerText = val;
     }
 
     function canMove(x, y) {
         let rx = Math.round(x); let ry = Math.round(y);
-        if(ry === 5 && (rx < 0 || rx > 18)) return true;
         if(!maze[ry] || maze[ry][rx] === 1) return false;
         return true;
     }
 
     function getRandomEmptyPos() {
-        let emptyCells = [];
-        for(let y=0; y<maze.length; y++) for(let x=0; x<maze[y].length; x++) 
-            if(maze[y][x] !== 1) emptyCells.push({x, y});
-        return emptyCells[Math.floor(Math.random() * emptyCells.length)];
+        let cells = [];
+        for(let y=0; y<maze.length; y++) for(let x=0; x<maze[y].length; x++) if(maze[y][x] !== 1) cells.push({x, y});
+        return cells[Math.floor(Math.random() * cells.length)];
     }
 
     function gameOver() {
         inGame = false; clearInterval(timerInterval);
-        db.ref('leaderboard').push({ name: agentName, score: score });
-        alert(`TIJD IS OM!\nScore: ${score}`);
+        saveScore(agentName, score);
+        alert(`EINDE DIENST!\nJe score: ${score}`);
         location.reload();
     }
 
+    function saveScore(name, scr) {
+        let s = JSON.parse(localStorage.getItem('vocab_scores') || "[]");
+        s.push({name, score: scr});
+        s.sort((a,b) => b.score - a.score);
+        localStorage.setItem('vocab_scores', JSON.stringify(s.slice(0,5)));
+    }
+
     function updateLeaderboard() {
-        db.ref('leaderboard').orderByChild('score').limitToLast(5).on('value', snap => {
-            let html = ""; let arr = []; 
-            snap.forEach(s => arr.push(s.val()));
-            arr.reverse().forEach((e, i) => html += `<div class="lb-entry"><span>${i+1}. ${e.name}</span><span>${e.score}</span></div>`);
-            document.getElementById('lb-list').innerHTML = html;
-        });
+        let s = JSON.parse(localStorage.getItem('vocab_scores') || "[]");
+        let h = ""; s.forEach((e, i) => h += `<div class="lb-entry"><span>${i+1}. ${e.name}</span><span>${e.score}</span></div>`);
+        document.getElementById('lb-list').innerHTML = h || "Nog geen scores.";
     }
 
     function gameLoop() {
         if(!inGame) return;
         frame++; if(frame % 15 === 0) lightOn = !lightOn;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        ctx.fillStyle = '#0022aa'; 
-        walls.forEach(w => ctx.fillRect(w.x*tileSize+1, w.y*tileSize+1, tileSize-2, tileSize-2));
-        
-        ctx.fillStyle = '#fff'; 
-        dots.forEach(d => { if(!d.eaten) { ctx.beginPath(); ctx.arc(d.x*tileSize+tileSize/2, d.y*tileSize+tileSize/2, 2, 0, 7); ctx.fill(); }});
+        ctx.fillStyle = '#0022aa'; walls.forEach(w => ctx.fillRect(w.x*tileSize+1, w.y*tileSize+1, tileSize-2, tileSize-2));
+        ctx.fillStyle = '#fff'; dots.forEach(d => { if(!d.eaten) { ctx.beginPath(); ctx.arc(d.x*tileSize+tileSize/2, d.y*tileSize+tileSize/2, 2, 0, 7); ctx.fill(); }});
 
         if(Math.abs(pacman.x - Math.round(pacman.x)) < 0.1 && Math.abs(pacman.y - Math.round(pacman.y)) < 0.1) {
             if(canMove(Math.round(pacman.x + pacman.nextDir.x), Math.round(pacman.y + pacman.nextDir.y))) pacman.dir = pacman.nextDir;
             if(!canMove(Math.round(pacman.x + pacman.dir.x), Math.round(pacman.y + pacman.dir.y))) pacman.dir = {x:0, y:0};
         }
         pacman.x += pacman.dir.x * 0.12; pacman.y += pacman.dir.y * 0.12;
-        if(pacman.x < -0.6) pacman.x = 18.6; if(pacman.x > 18.6) pacman.x = -0.6;
 
         ctx.fillStyle = 'yellow'; ctx.beginPath(); ctx.arc(pacman.x*tileSize+tileSize/2, pacman.y*tileSize+tileSize/2, 8, 0, 7); ctx.fill();
         if(lightOn) { ctx.fillStyle = '#00f'; ctx.beginPath(); ctx.arc(pacman.x*tileSize+tileSize/2, pacman.y*tileSize+tileSize/2 - 5, 4, 0, 7); ctx.fill(); }
 
         ghosts.forEach(g => {
             if(Math.abs(g.x - Math.round(g.x)) < 0.1 && Math.abs(g.y - Math.round(g.y)) < 0.1) {
-                let dx = pacman.x > g.x ? 1 : -1;
-                let dy = pacman
+                let dx = pacman.x > g.x ? 1 : -1; let dy = pacman.y > g.y ? 1 : -1;
+                if(Math.abs(pacman.x - g.x) > Math.abs(pacman.y - g.y)) {
+                    if(canMove(Math.round(g.x + dx), Math.round(g.y))) { g.vx = dx; g.vy = 0; }
+                    else if(canMove(Math.round(g.x), Math.round(g.y + dy))) { g.vx = 0; g.vy = dy; }
+                } else {
+                    if(canMove(Math.round(g.x), Math.round(g.y + dy))) { g.vx = 0; g.vy = dy; }
+                    else if(canMove(Math.round(g.x + dx), Math.round(g.y))) { g.vx = dx; g.vy = 0; }
+                }
+            }
+            g.x += g.vx * (ghostBaseSpeed + currentLevel*0.01); g.y += g.vy * (ghostBaseSpeed + currentLevel*0.01);
+            ctx.fillStyle = g.color; ctx.beginPath(); ctx.arc(g.x*tileSize+tileSize/2, g.y*tileSize+tileSize/2, 8, 0, 7); ctx.fill();
+            if(Math.hypot(pacman.x-g.x, pacman.y-g.y) < 0.8) {
+                score += 100; let newPos = getRandomEmptyPos(); g.x = newPos.x; g.y = newPos.y;
+                if(score >= currentLevel * 600) { currentLevel++; document.getElementById('lvl-val').innerText = currentLevel; }
+            }
+        });
+        document.getElementById('scr-val').innerText = score;
+        requestAnimationFrame(gameLoop);
+    }
+
+    showQuestion();
+    updateLeaderboard();
+</script>
+</body>
+</html>
