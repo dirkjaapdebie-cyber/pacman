@@ -2,135 +2,247 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Juridische Pacman - Bulk Edition</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Aangiftebotje - Arrest Mode</title>
+    <script src="https://www.gstatic.com/firebasejs/9.1.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.1/firebase-database-compat.js"></script>
     <style>
-        #game-board {
-            width: 600px;
-            height: 400px;
-            background-color: #000;
-            position: relative;
-            overflow: hidden;
-            border: 4px solid #2563eb;
-            border-radius: 8px;
-        }
-        .pacman {
-            width: 30px;
-            height: 30px;
-            background-color: yellow;
-            border-radius: 50%;
-            position: absolute;
-            transition: all 0.1s linear;
-        }
-        .pacman::after {
-            content: '';
-            display: block;
-            width: 0; height: 0;
-            border-right: 15px solid transparent;
-            border-top: 15px solid transparent;
-            border-bottom: 15px solid transparent;
-            position: absolute;
-            right: 0; top: 0;
-        }
-        .word-item {
-            position: absolute;
-            color: #fff;
-            font-size: 12px;
-            font-weight: bold;
-            background: rgba(37, 99, 235, 0.5);
-            padding: 2px 6px;
-            border-radius: 4px;
-            white-space: nowrap;
-        }
+        body { font-family: sans-serif; background: #222; color: white; text-align: center; }
+        canvas { border: 2px solid #00f; background: #000; display: block; margin: 10px auto; }
+        .optie { padding: 10px; margin: 5px; cursor: pointer; }
+        .correct { background: green; color: white; }
+        .fout { background: red; color: white; }
+        #game-container, #name-box, #main-game, #admin-speed { display: none; }
+        .lb-entry { display: flex; justify-content: space-between; width: 200px; margin: 0 auto; }
     </style>
 </head>
-<body class="bg-slate-950 flex flex-col items-center justify-center min-h-screen p-4 text-white">
+<body>
 
-    <h1 class="text-3xl font-bold text-blue-500 mb-4 uppercase">Juridische Pacman</h1>
+    <div id="quiz-box">
+        <h2 id="vraag">Laden...</h2>
+        <div id="optie-container"></div>
+        <p id="progress-text">Voortgang: 0/5</p>
+        <button id="btn-retry" style="display:none;" onclick="location.reload()">Opnieuw proberen</button>
+    </div>
+
+    <div id="name-box">
+        <h2>Goed gedaan!</h2>
+        <p>Voer je agent-naam in:</p>
+        <input type="text" id="agent-name" placeholder="Naam">
+        <button onclick="startArrestMode()">Start Game</button>
+    </div>
+
+    <div id="main-game">
+        <h3>Score: <span id="scr-val">0</span> | Level: <span id="lvl-val">1</span> | Tijd: <span id="timer-val">120</span></h3>
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <div id="admin-speed">
+        Ghost Speed: <input type="range" min="0.01" max="0.2" step="0.01" onchange="updateGhostSpeed(this.value)"> <span id="speed-val">0.06</span>
+    </div>
+
+    <div id="leaderboard">
+        <h3>Top Agenten</h3>
+        <div id="lb-list"></div>
+    </div>
+
+    <hr>
+    <h3>Bulk Import</h3>
+    <textarea id="bulk-input" placeholder="vraag | antwoord"></textarea><br>
+    <button onclick="importBulk()">Importeer Woorden</button>
+
+<script>
+    // --- CONFIGURATIE ---
+    const firebaseConfig = { 
+        apiKey: "", // VUL HIER JE KEY IN
+        databaseURL: "https://aangiftebotje-default-rtdb.europe-west1.firebasedatabase.app", 
+        projectId: "aangiftebotje" 
+    };
     
-    <div id="game-board">
-        <div id="pacman" class="pacman" style="left: 20px; top: 20px;"></div>
-    </div>
+    // Initialiseer Firebase (Compat stijl)
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
 
-    <div class="mt-6 w-full max-w-2xl bg-slate-900 p-6 rounded-lg border border-slate-700">
-        <h2 class="text-xl font-bold text-blue-400 mb-4">De Juridische Woorden Bulk</h2>
-        <div id="bulk-list" class="grid grid-cols-2 gap-2 text-sm">
-            </div>
-    </div>
+    // --- VARIABELEN ---
+    let dynamicWords = [], score = 0, frame = 0, inGame = false, quizCount = 0, lightOn = true, agentName = "";
+    let canvas, ctx, tileSize = 20;
+    let pacman = { x: 9, y: 9, dir: {x:0, y:0}, nextDir: {x:0, y:0} };
+    let dots = [], walls = [], ghosts = [], ghostBaseSpeed = 0.06; 
+    let timeLeft = 120, currentLevel = 1, timerInterval;
 
-    <script>
-        // --- DE BULK AAN WOORDEN EN BETEKENISSEN ---
-        const juridischeBulk = [
-            { woord: "Tenlastelegging", betekenis: "De officiële beschuldiging in de dagvaarding." },
-            { woord: "Requisitoir", betekenis: "De slottoespraak van de Officier met de strafeis." },
-            { woord: "Pleidooi", betekenis: "De verdediging van de advocaat voor de verdachte." },
-            { woord: "Vonnis", betekenis: "De uitspraak van de rechter." },
-            { woord: "Recidivegevaar", betekenis: "De kans dat iemand weer een misdaad pleegt." },
-            { woord: "Mishandeling", betekenis: "Opzettelijk pijn of letsel toebrengen aan een ander." },
-            { woord: "Bewijslast", betekenis: "De plicht om aan te tonen dat iemand schuldig is." },
-            { woord: "Shocktoestand", betekenis: "Hevige emotionele reactie na een trauma." },
-            { woord: "Huisverbod", betekenis: "Tijdelijk verbod om de eigen woning te betreden." },
-            { woord: "Proeftijd", betekenis: "Periode waarin je niet opnieuw de fout in mag gaan." }
-        ];
+    const maze = [
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [1,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,1],
+        [1,0,1,1,0,1,1,1,0,1,0,1,1,1,0,1,1,0,1],
+        [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+        [1,1,0,1,0,1,1,1,1,1,1,1,1,1,0,1,0,1,1],
+        [0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0], 
+        [1,1,1,1,0,1,1,1,1,1,1,1,1,1,0,1,1,1,1],
+        [1,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,1],
+        [1,0,1,1,0,1,1,1,0,0,0,1,1,1,0,1,1,0,1],
+        [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ];
 
-        const board = document.getElementById('game-board');
-        const pacman = document.getElementById('pacman');
-        const bulkDisplay = document.getElementById('bulk-list');
-        
-        let pacX = 20;
-        let pacY = 20;
+    // --- FUNCTIES ---
 
-        // 1. Vul de lijst onderaan
-        juridischeBulk.forEach(item => {
-            const div = document.createElement('div');
-            div.className = "p-2 border-b border-slate-800";
-            div.innerHTML = `<span class="text-blue-400 font-bold">${item.woord}:</span> ${item.betekenis}`;
-            bulkDisplay.appendChild(div);
-
-            // 2. Plaats woorden willekeurig in het speelveld
-            const wordSpan = document.createElement('div');
-            wordSpan.className = 'word-item';
-            wordSpan.innerText = item.woord;
-            wordSpan.style.left = Math.random() * 500 + 'px';
-            wordSpan.style.top = Math.random() * 350 + 'px';
-            board.appendChild(wordSpan);
-        });
-
-        // 3. Besturing (Pijltjestoetsen)
-        window.addEventListener('keydown', (e) => {
-            const step = 20;
-            if(e.key === 'ArrowRight') pacX += step;
-            if(e.key === 'ArrowLeft') pacX -= step;
-            if(e.key === 'ArrowUp') pacY -= step;
-            if(e.key === 'ArrowDown') pacY += step;
-
-            // Grenzen bewaken
-            pacX = Math.max(0, Math.min(570, pacX));
-            pacY = Math.max(0, Math.min(370, pacY));
-
-            pacman.style.left = pacX + 'px';
-            pacman.style.top = pacY + 'px';
-
-            checkCollision();
-        });
-
-        // 4. Check of Pacman een woord hapt
-        function checkCollision() {
-            const words = document.querySelectorAll('.word-item');
-            words.forEach(word => {
-                const rect1 = pacman.getBoundingClientRect();
-                const rect2 = word.getBoundingClientRect();
-
-                if (!(rect1.right < rect2.left || 
-                      rect1.left > rect2.right || 
-                      rect1.bottom < rect2.top || 
-                      rect1.top > rect2.bottom)) {
-                    word.style.backgroundColor = '#10b981'; // Wordt groen bij 'happen'
-                    setTimeout(() => word.remove(), 200);   // Verdwijnt
+    function importBulk() {
+        const input = document.getElementById('bulk-input').value;
+        const lines = input.split('\n');
+        lines.forEach(line => {
+            const parts = line.split('|');
+            if(parts.length === 2) {
+                const vraag = parts[0].trim();
+                const antwoord = parts[1].trim();
+                if(vraag && antwoord) {
+                    db.ref('woorden').push({ v: vraag, m: antwoord });
                 }
-            });
+            }
+        });
+        alert('Woorden toegevoegd!');
+        loadWords();
+    }
+
+    function loadWords() {
+        db.ref('woorden').once('value', snap => { 
+            if(snap.exists()){ 
+                dynamicWords = Object.values(snap.val()); 
+                showQuestion(); 
+            } else {
+                document.getElementById('vraag').innerText = "Database is leeg. Gebruik bulk import!";
+            }
+        });
+        updateLeaderboard();
+    }
+
+    function showQuestion() {
+        if(quizCount >= 5) { 
+            document.getElementById('quiz-box').style.display='none'; 
+            document.getElementById('name-box').style.display='block'; 
+            return; 
         }
-    </script>
-</body>
-</html>
+        document.getElementById('progress-text').innerText = `Voortgang: ${quizCount}/5`;
+        
+        if(dynamicWords.length < 3) {
+            document.getElementById('vraag').innerText = "Voeg minimaal 3 woorden toe!";
+            return;
+        }
+
+        const q = dynamicWords[Math.floor(Math.random()*dynamicWords.length)];
+        let others = dynamicWords.filter(w => w.m !== q.m).map(w => w.m).sort(() => 0.5 - Math.random());
+        let opties = [q.m, others[0], others[1]].sort(() => 0.5 - Math.random());
+        
+        document.getElementById('vraag').innerText = q.v;
+        const cont = document.getElementById('optie-container'); cont.innerHTML = '';
+        opties.forEach(o => {
+            const b = document.createElement('button'); b.className='optie'; b.innerText=o;
+            b.onclick = () => {
+                if(o === q.m) { b.classList.add('correct'); quizCount++; setTimeout(showQuestion, 600); }
+                else { b.classList.add('fout'); document.getElementById('btn-retry').style.display='block'; }
+            };
+            cont.appendChild(b);
+        });
+    }
+
+    function startArrestMode() {
+        agentName = document.getElementById('agent-name').value || "Agent";
+        document.getElementById('name-box').style.display = 'none';
+        document.getElementById('main-game').style.display = 'block';
+        document.getElementById('admin-speed').style.display = 'block';
+        setupCanvas(); 
+        initLevel(1); 
+        requestAnimationFrame(gameLoop);
+    }
+
+    function setupCanvas() {
+        canvas = document.getElementById('gameCanvas'); ctx = canvas.getContext('2d');
+        canvas.width = 19 * tileSize; canvas.height = 11 * tileSize;
+        window.addEventListener('keydown', e => {
+            if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)) e.preventDefault(); 
+            if(e.key.includes("Up")) pacman.nextDir = {x:0, y:-1};
+            if(e.key.includes("Down")) pacman.nextDir = {x:0, y:1};
+            if(e.key.includes("Left")) pacman.nextDir = {x:-1, y:0};
+            if(e.key.includes("Right")) pacman.nextDir = {x:1, y:0};
+        });
+    }
+
+    function initLevel(level) {
+        currentLevel = level;
+        timeLeft = 120;
+        dots = []; walls = [];
+        for(let y=0; y<maze.length; y++) for(let x=0; x<maze[y].length; x++) {
+            if(maze[y][x] === 1) walls.push({x, y});
+            else if(maze[y][x] === 0 || maze[y][x] === 2) dots.push({x, y, eaten: false});
+        }
+        pacman.x = 9; pacman.y = 9; pacman.dir = {x:0, y:0};
+        ghosts = [{x:1, y:1, color:'red', vx:0, vy:0}, {x:17, y:1, color:'pink', vx:0, vy:0}];
+        if(timerInterval) clearInterval(timerInterval);
+        timerInterval = setInterval(() => { 
+            if(inGame) { 
+                timeLeft--; 
+                document.getElementById('timer-val').innerText = timeLeft;
+                if(timeLeft <= 0) gameOver(); 
+            }
+        }, 1000);
+        inGame = true;
+    }
+
+    function updateGhostSpeed(val) {
+        ghostBaseSpeed = parseFloat(val);
+        document.getElementById('speed-val').innerText = val;
+    }
+
+    function canMove(x, y) {
+        let rx = Math.round(x); let ry = Math.round(y);
+        if(ry === 5 && (rx < 0 || rx > 18)) return true;
+        if(!maze[ry] || maze[ry][rx] === 1) return false;
+        return true;
+    }
+
+    function getRandomEmptyPos() {
+        let emptyCells = [];
+        for(let y=0; y<maze.length; y++) for(let x=0; x<maze[y].length; x++) 
+            if(maze[y][x] !== 1) emptyCells.push({x, y});
+        return emptyCells[Math.floor(Math.random() * emptyCells.length)];
+    }
+
+    function gameOver() {
+        inGame = false; clearInterval(timerInterval);
+        db.ref('leaderboard').push({ name: agentName, score: score });
+        alert(`TIJD IS OM!\nScore: ${score}`);
+        location.reload();
+    }
+
+    function updateLeaderboard() {
+        db.ref('leaderboard').orderByChild('score').limitToLast(5).on('value', snap => {
+            let html = ""; let arr = []; 
+            snap.forEach(s => arr.push(s.val()));
+            arr.reverse().forEach((e, i) => html += `<div class="lb-entry"><span>${i+1}. ${e.name}</span><span>${e.score}</span></div>`);
+            document.getElementById('lb-list').innerHTML = html;
+        });
+    }
+
+    function gameLoop() {
+        if(!inGame) return;
+        frame++; if(frame % 15 === 0) lightOn = !lightOn;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = '#0022aa'; 
+        walls.forEach(w => ctx.fillRect(w.x*tileSize+1, w.y*tileSize+1, tileSize-2, tileSize-2));
+        
+        ctx.fillStyle = '#fff'; 
+        dots.forEach(d => { if(!d.eaten) { ctx.beginPath(); ctx.arc(d.x*tileSize+tileSize/2, d.y*tileSize+tileSize/2, 2, 0, 7); ctx.fill(); }});
+
+        if(Math.abs(pacman.x - Math.round(pacman.x)) < 0.1 && Math.abs(pacman.y - Math.round(pacman.y)) < 0.1) {
+            if(canMove(Math.round(pacman.x + pacman.nextDir.x), Math.round(pacman.y + pacman.nextDir.y))) pacman.dir = pacman.nextDir;
+            if(!canMove(Math.round(pacman.x + pacman.dir.x), Math.round(pacman.y + pacman.dir.y))) pacman.dir = {x:0, y:0};
+        }
+        pacman.x += pacman.dir.x * 0.12; pacman.y += pacman.dir.y * 0.12;
+        if(pacman.x < -0.6) pacman.x = 18.6; if(pacman.x > 18.6) pacman.x = -0.6;
+
+        ctx.fillStyle = 'yellow'; ctx.beginPath(); ctx.arc(pacman.x*tileSize+tileSize/2, pacman.y*tileSize+tileSize/2, 8, 0, 7); ctx.fill();
+        if(lightOn) { ctx.fillStyle = '#00f'; ctx.beginPath(); ctx.arc(pacman.x*tileSize+tileSize/2, pacman.y*tileSize+tileSize/2 - 5, 4, 0, 7); ctx.fill(); }
+
+        ghosts.forEach(g => {
+            if(Math.abs(g.x - Math.round(g.x)) < 0.1 && Math.abs(g.y - Math.round(g.y)) < 0.1) {
+                let dx = pacman.x > g.x ? 1 : -1;
+                let dy = pacman
